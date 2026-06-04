@@ -54,13 +54,32 @@ nginx -t
 systemctl reload nginx
 ```
 
+## Supported links (same as the website)
+
+| Platform | Example link types |
+|----------|-------------------|
+| YouTube | `youtube.com/watch`, `youtu.be/...` |
+| Instagram | Posts, reels (`instagram.com/reel/...`) |
+| TikTok | `tiktok.com/@user/video/...` |
+| Twitter / X | `twitter.com/...`, `x.com/...` |
+| Facebook | `facebook.com/watch`, `fb.watch/...` |
+| Vimeo | `vimeo.com/123456` |
+
+**Instagram & Facebook:** Some videos need login. Optional: export browser cookies to `/var/www/vidmate-api/cookies.txt` and set in `ecosystem.config.cjs`:
+
+```js
+YTDLP_COOKIES_FILE: '/var/www/vidmate-api/cookies.txt',
+```
+
+Then `pm2 restart vidmate-api`.
+
 ## Test
 
 Open: https://vidmate.ai-workflows.cloud/api/health  
 
-Should show: `"ok": true, "ytdlp": true`
+Should show: `"ok": true`, `"ytdlp": true`, and a list of `platforms`.
 
-Paste a YouTube link → when finished, your browser saves the file locally.
+Try each site from the home page platform cards.
 
 ## Legal note
 

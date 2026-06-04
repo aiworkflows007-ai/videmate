@@ -6,11 +6,13 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { matchPlatform, SUPPORTED_PLATFORMS, supportedPlatformsHint } from './platforms.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3001);
 const JOBS_DIR = process.env.JOBS_DIR || path.join(__dirname, '../.data/jobs');
 const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
+const COOKIES_FILE = process.env.YTDLP_COOKIES_FILE || '';
 
 const app = express();
 app.use(cors());
@@ -52,20 +54,53 @@ function runYtDlp(args, onProgress) {
   });
 }
 
+function buildYtDlpArgs(url, extraArgs) {
+  const platform = matchPlatform(url);
+  const args = [
+    '--no-playlist',
+    '--no-warnings',
+    '--extractor-retries',
+    '3',
+    '--socket-timeout',
+    '30',
+    '--geo-bypass',
+    ...extraArgs,
+  ];
+
+  if (platform === 'instagram') {
+    args.push('--add-header', 'Referer:https://www.instagram.com/');
+  }
+  if (platform === 'facebook') {
+    args.push('--add-header', 'Referer:https://www.facebook.com/');
+  }
+  if (platform === 'tiktok') {
+    args.push('--add-header', 'Referer:https://www.tiktok.com/');
+  }
+
+  if (COOKIES_FILE && fs.existsSync(COOKIES_FILE)) {
+    args.push('--cookies', COOKIES_FILE);
+  }
+
+  args.push(url);
+  return args;
+}
+
 async function fetchMeta(url) {
-  const { stdout } = await runYtDlp(['--dump-single-json', '--no-download', '--no-warnings', url]);
+  const { stdout } = await runYtDlp(
+    buildYtDlpArgs(url, ['--dump-single-json', '--no-download'])
+  );
   return JSON.parse(stdout.trim().split('\n').pop());
 }
 
-function detectPlatform(url) {
-  const u = url.toLowerCase();
-  if (u.includes('youtube') || u.includes('youtu.be')) return 'youtube';
-  if (u.includes('instagram')) return 'instagram';
-  if (u.includes('tiktok')) return 'tiktok';
-  if (u.includes('twitter') || u.includes('x.com')) return 'twitter';
-  if (u.includes('facebook') || u.includes('fb.watch')) return 'facebook';
-  if (u.includes('vimeo')) return 'vimeo';
-  return 'other';
+function friendlyError(platform, raw) {
+  const msg = raw || '';
+  if (
+    (platform === 'instagram' || platform === 'facebook') &&
+    (msg.includes('login') || msg.includes('cookie') || msg.includes('Private'))
+  ) {
+    return `${msg.slice(0, 200)} — Tip: Instagram/Facebook often need a cookies.txt file on the server (ask support).`;
+  }
+  return msg.slice(0, 500);
 }
 
 async function runJob(job) {
@@ -78,15 +113,12 @@ async function runJob(job) {
 
   try {
     const formatArgs = formatSelector(job.type, job.quality);
-    const args = [
-      '--no-playlist',
-      '--no-warnings',
+    const args = buildYtDlpArgs(job.url, [
       '-o',
       outTemplate,
       ...formatArgs,
       ...(job.type === 'video' ? ['--merge-output-format', 'mp4'] : []),
-      job.url,
-    ];
+    ]);
     await runYtDlp(args, (pct) => {
       job.progress = Math.min(99, pct);
     });
@@ -105,7 +137,7 @@ async function runJob(job) {
     job.size = job.totalSize;
   } catch (err) {
     job.status = 'error';
-    job.error = err.message || String(err);
+    job.error = friendlyError(job.platform, err.message || String(err));
   }
 }
 
@@ -115,10 +147,20 @@ function formatBytes(n) {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+app.get('/api/platforms', (_req, res) => {
+  res.json({ platforms: SUPPORTED_PLATFORMS });
+});
+
 app.get('/api/health', async (_req, res) => {
   try {
     const { stdout } = await runYtDlp(['--version']);
-    res.json({ ok: true, ytdlp: true, version: stdout.trim() });
+    res.json({
+      ok: true,
+      ytdlp: true,
+      version: stdout.trim(),
+      platforms: SUPPORTED_PLATFORMS.map((p) => p.id),
+      cookiesConfigured: Boolean(COOKIES_FILE && fs.existsSync(COOKIES_FILE)),
+    });
   } catch {
     res.status(503).json({ ok: false, ytdlp: false, message: 'yt-dlp not installed on server' });
   }
@@ -130,16 +172,24 @@ app.post('/api/jobs', async (req, res) => {
     return res.status(400).json({ error: 'URL is required' });
   }
 
+  const trimmed = url.trim();
+  const platform = matchPlatform(trimmed);
+  if (!platform) {
+    return res.status(400).json({
+      error: `This link is not from a supported site. Supported: ${supportedPlatformsHint()}`,
+    });
+  }
+
   const id = randomUUID();
   const job = {
     id,
-    url: url.trim(),
+    url: trimmed,
     type: type === 'audio' ? 'audio' : 'video',
     quality,
     status: 'pending',
     progress: 0,
     title: 'Preparing download…',
-    platform: detectPlatform(url),
+    platform,
     thumbnailUrl: '',
     filename: null,
     filePath: null,

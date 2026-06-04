@@ -1,4 +1,4 @@
-# Build Vidmate and deploy to Hostinger VPS (SSH + scp — clearer errors than scp-action)
+# Build Vidmate and deploy static files + API to Hostinger VPS
 
 name: Deploy to VPS
 
@@ -47,7 +47,7 @@ jobs:
           EOF
 
       - name: Build
-        run: npm run build
+        run: node node_modules/vite/bin/vite.js build
 
       - name: Pack dist and API
         run: |
@@ -66,7 +66,7 @@ jobs:
         run: |
           ssh -o BatchMode=yes -o ConnectTimeout=30 \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
-            "echo SSH_OK && whoami && hostname"
+            "echo SSH_OK"
 
       - name: Prepare folders on VPS
         run: |
@@ -77,27 +77,30 @@ jobs:
         run: |
           scp -o ConnectTimeout=60 dist.tar.gz server.tar.gz \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/vidmate-deploy/"
-          echo "Upload finished."
 
-      - name: Extract website and API
+      - name: Deploy website files
         env:
           WEB_ROOT: ${{ secrets.VPS_WEB_ROOT || '/var/www/vidmate' }}
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
-            "set -e
-            WEB_ROOT='${WEB_ROOT}'
-            test -f /tmp/vidmate-deploy/dist.tar.gz
-            test -f /tmp/vidmate-deploy/server.tar.gz
-            mkdir -p \"\$WEB_ROOT\" /var/www/vidmate-api
-            tar -xzf /tmp/vidmate-deploy/dist.tar.gz -C \"\$WEB_ROOT\"
-            tar -xzf /tmp/vidmate-deploy/server.tar.gz -C /var/www/vidmate-api
-            chown -R www-data:www-data \"\$WEB_ROOT\" 2>/dev/null || true
-            cd /var/www/vidmate-api && npm install --omit=dev --ignore-scripts
-            if command -v pm2 >/dev/null 2>&1; then
-              pm2 restart vidmate-api 2>/dev/null || pm2 start ecosystem.config.cjs
-              pm2 save 2>/dev/null || true
-            else
-              echo 'WARN: install pm2 on VPS for downloads API'
-            fi
-            rm -f /tmp/vidmate-deploy/dist.tar.gz /tmp/vidmate-deploy/server.tar.gz
-            echo Deployed site and API"
+            "WEB_ROOT='${WEB_ROOT}' && \
+             test -f /tmp/vidmate-deploy/dist.tar.gz && \
+             mkdir -p \"\$WEB_ROOT\" && \
+             tar -xzf /tmp/vidmate-deploy/dist.tar.gz -C \"\$WEB_ROOT\" && \
+             chown -R www-data:www-data \"\$WEB_ROOT\" 2>/dev/null || true && \
+             echo Site deployed to \$WEB_ROOT"
+
+      - name: Deploy API files (does not fail if Node missing)
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "test -f /tmp/vidmate-deploy/server.tar.gz && \
+             mkdir -p /var/www/vidmate-api && \
+             tar -xzf /tmp/vidmate-deploy/server.tar.gz -C /var/www/vidmate-api && \
+             if command -v npm >/dev/null 2>&1; then \
+               cd /var/www/vidmate-api && npm install --omit=dev --ignore-scripts; \
+             else echo 'WARN: npm not on VPS — install Node for downloads API'; fi && \
+             if command -v pm2 >/dev/null 2>&1; then \
+               cd /var/www/vidmate-api && pm2 restart vidmate-api 2>/dev/null || pm2 start ecosystem.config.cjs; \
+             else echo 'WARN: pm2 not on VPS — see deploy/enable-real-downloads.md'; fi && \
+             rm -f /tmp/vidmate-deploy/dist.tar.gz /tmp/vidmate-deploy/server.tar.gz && \
+             echo API files deployed"
