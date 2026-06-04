@@ -201,7 +201,7 @@ export function HomeView({ onStartDownload }: HomeViewProps) {
               </p>
             )}
             <p className="text-[11px] text-on-surface-variant/60 mt-3 font-medium">
-              Free for personal use · Files stay on your device
+              Finished files save to your computer&apos;s Downloads folder
             </p>
           </div>
 

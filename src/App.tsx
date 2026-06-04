@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Download, 
   Home, 
@@ -21,6 +21,12 @@ import { PrivacyPolicyPage } from './components/legal/PrivacyPolicyPage';
 import { TermsPage } from './components/legal/TermsPage';
 import { LibraryItem, ActiveTask, AppSettings } from './types';
 import { INITIAL_LIBRARY_ITEMS, INITIAL_ACTIVE_TASKS } from './data';
+import {
+  createDownloadJob,
+  getJobStatus,
+  saveJobFileToDevice,
+  cancelJob,
+} from './api/download';
 
 type LegalPage = 'privacy' | 'terms' | null;
 
@@ -98,72 +104,98 @@ export default function App() {
     }
   }, [settings.darkMode]);
 
-  // Handle active downloads progresses simulated timer ticks
+  const savedToDeviceRef = useRef<Set<string>>(new Set());
+
+  // Poll real server downloads and save files to the user's device
   useEffect(() => {
-    const interval = setInterval(() => {
-      setActiveTasks((prevTasks) => {
-        if (prevTasks.length === 0) return prevTasks;
+    const jobIds = activeTasks.map((t) => t.jobId).filter(Boolean) as string[];
+    if (jobIds.length === 0) return;
 
-        const updatedTasks: ActiveTask[] = [];
-        
-        prevTasks.forEach((task) => {
-          if (task.isPaused) {
-            updatedTasks.push(task);
-            return;
+    let stopped = false;
+
+    const poll = async () => {
+      if (stopped) return;
+
+      for (const task of activeTasks) {
+        if (!task.jobId || task.isPaused || savedToDeviceRef.current.has(task.jobId)) continue;
+
+        try {
+          const status = await getJobStatus(task.jobId);
+
+          if (status.status === 'error') {
+            setActiveTasks((prev) => prev.filter((t) => t.jobId !== task.jobId));
+            triggerToast('Download failed', status.error || task.title, 'info');
+            continue;
           }
 
-          // Progress increments based on speed
-          const increment = (task.speed / 5) * (Math.random() * 1.5 + 0.5);
-          const nextProgress = task.progress + increment;
-
-          if (nextProgress >= 100) {
-            // Task finishes extraction! Add to library completed catalog list
-            const completedId = `lib-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-            const newItem: LibraryItem = {
-              id: completedId,
-              title: task.title,
-              type: task.type,
-              size: task.totalSize,
-              duration: task.type === 'video' ? '03:45' : '02:50',
-              dateString: 'Just now',
-              quality: task.quality,
-              platform: task.platform,
-              thumbnailUrl: task.thumbnailUrl,
-              category: task.type === 'video' ? 'Videos / Downloaded' : 'Audio / Extract',
-            };
-
-            setLibraryItems((prevLib) => [newItem, ...prevLib]);
-            
-            // Increment local storage occupied metric slightly
-            setSettings((prevSet) => {
-              const fileWeight = task.type === 'video' ? 0.45 : 0.01; // file weight approximation
-              return {
-                ...prevSet,
-                systemStorageUsed: Math.min(prevSet.systemStorageTotal, prevSet.systemStorageUsed + fileWeight),
-              };
-            });
-
-            // Trigger beautiful completion Toast notice!
-            triggerToast(
-              `Extraction complete!`,
-               task.title,
-              'success'
+          if (status.status !== 'ready') {
+            setActiveTasks((prev) =>
+              prev.map((t) =>
+                t.jobId === task.jobId
+                  ? {
+                      ...t,
+                      title: status.title || t.title,
+                      progress: status.progress ?? t.progress,
+                      totalSize: status.totalSize || t.totalSize,
+                      size: status.size || t.size,
+                      thumbnailUrl: status.thumbnailUrl || t.thumbnailUrl,
+                      duration: status.duration || t.duration,
+                      speed: Math.max(t.speed, 1.2),
+                      remainingSeconds: Math.max(
+                        5,
+                        Math.round((100 - (status.progress || 0)) / 8)
+                      ),
+                    }
+                  : t
+              )
             );
-          } else {
-            // Task continues downloading
-            updatedTasks.push({
-              ...task,
-              progress: nextProgress,
-              remainingSeconds: Math.max(1, Math.round((task.totalSize.includes('GB') ? 1000 : 50) * (100 - nextProgress) / (task.speed * 10))),
-            });
+            continue;
           }
-        });
 
-        return updatedTasks;
-      });
-    }, 1000);
+          if (!status.filename) continue;
 
-    return () => clearInterval(interval);
+          savedToDeviceRef.current.add(task.jobId);
+          await saveJobFileToDevice(task.jobId, status.filename);
+
+          const completedId = `lib-${Date.now()}`;
+          const newItem: LibraryItem = {
+            id: completedId,
+            title: status.title || task.title,
+            type: task.type,
+            size: status.totalSize || task.totalSize,
+            duration: status.duration || (task.type === 'video' ? '—' : '—'),
+            dateString: 'Just now',
+            quality: task.quality,
+            platform: (status.platform as LibraryItem['platform']) || task.platform,
+            thumbnailUrl: status.thumbnailUrl || task.thumbnailUrl,
+            category: task.type === 'video' ? 'Videos / Downloaded' : 'Audio / Extract',
+          };
+
+          setLibraryItems((prevLib) => [newItem, ...prevLib]);
+          setActiveTasks((prev) => prev.filter((t) => t.jobId !== task.jobId));
+          setSettings((prevSet) => {
+            const fileWeight = task.type === 'video' ? 0.45 : 0.01;
+            return {
+              ...prevSet,
+              systemStorageUsed: Math.min(
+                prevSet.systemStorageTotal,
+                prevSet.systemStorageUsed + fileWeight
+              ),
+            };
+          });
+          triggerToast('Saved to your device', status.title || task.title, 'success');
+        } catch {
+          /* network blip — try again on next poll */
+        }
+      }
+    };
+
+    const interval = setInterval(poll, 2000);
+    poll();
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
   }, [activeTasks]);
 
   const triggerToast = (message: string, sub: string, type: 'success' | 'info') => {
@@ -171,59 +203,52 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  // Start new download task
-  const handleStartDownload = (urlString: string, selectedQuality: string, selectedType: 'video' | 'audio') => {
-    // Recognize host platform based on link
-    let recognizedPlatform: ActiveTask['platform'] = 'other';
-    let thumbnailPlaceholder = '';
-
+  const detectPlatform = (urlString: string): ActiveTask['platform'] => {
     const lowerUrl = urlString.toLowerCase();
-    if (lowerUrl.includes('youtube') || lowerUrl.includes('youtu.be')) {
-      recognizedPlatform = 'youtube';
-      thumbnailPlaceholder = 'https://lh3.googleusercontent.com/aida-public/AB6AXuAv1GepoSFlkBlNXgrXeYQNKxnYODap9ChSTbSCfnGcCCDElFqEA83mVTL0p0G1J4h3fA-WhaHQbUV09SxWj3wqRMKT8ENZStQONBlfDElM44qnH9Dlju4SOkSJDDdpa_cgBxeUvoB4frU_EU-NcZMzl9rL0xKr-wGbkmSQeikpFGQQ5m9fLv5i_JcnjVVAB0QgAjUHhYOVGUAmknrhSmCcZHSu-gKQ69EzOSg97PFLt-c5xRnhWNepkcWq3pegDN3WtKfwi8JwTRE';
-    } else if (lowerUrl.includes('vimeo')) {
-      recognizedPlatform = 'vimeo';
-      thumbnailPlaceholder = 'https://lh3.googleusercontent.com/aida-public/AB6AXuAQRhPvmPDuaMPJVwYE-Q31IpEd0pRpM-XDt4yeTkfosVY91OZzCiIFDHDVtVRuAt75iEkHXRfQmWxjvN-ZsIvHk_TgkUGUJTySNC3mqyCsFVz4Yw3f9hGJXqiFNZZeB1aq6lIcQPGBC9cR-UcagcH0faQVQ4JOG-2dq-dcLDovPh-njmEDOilZ3x-qQSsPCcn4WZPerP2t2AgBKEtlfVKOdMitWW-WlOQ585oV8mGmg38YwsunuRjLGo1YbRl7S4NVWF3rNR4D_4Y';
-    } else if (lowerUrl.includes('instagram')) {
-      recognizedPlatform = 'instagram';
-    } else if (lowerUrl.includes('tiktok')) {
-      recognizedPlatform = 'tiktok';
-    } else if (lowerUrl.includes('twitter') || lowerUrl.includes('x.com')) {
-      recognizedPlatform = 'twitter';
-    } else if (lowerUrl.includes('facebook') || lowerUrl.includes('fb.watch')) {
-      recognizedPlatform = 'facebook';
+    if (lowerUrl.includes('youtube') || lowerUrl.includes('youtu.be')) return 'youtube';
+    if (lowerUrl.includes('vimeo')) return 'vimeo';
+    if (lowerUrl.includes('instagram')) return 'instagram';
+    if (lowerUrl.includes('tiktok')) return 'tiktok';
+    if (lowerUrl.includes('twitter') || lowerUrl.includes('x.com')) return 'twitter';
+    if (lowerUrl.includes('facebook') || lowerUrl.includes('fb.watch')) return 'facebook';
+    return 'other';
+  };
+
+  const handleStartDownload = async (
+    urlString: string,
+    selectedQuality: string,
+    selectedType: 'video' | 'audio'
+  ) => {
+    const platform = detectPlatform(urlString);
+
+    try {
+      const created = await createDownloadJob(urlString, selectedQuality, selectedType);
+
+      const newTask: ActiveTask = {
+        id: `task-${Date.now()}`,
+        jobId: created.jobId,
+        sourceUrl: urlString,
+        title: created.title,
+        size: '0 MB',
+        totalSize: '…',
+        progress: 0,
+        speed: 0,
+        remainingSeconds: 60,
+        isPaused: false,
+        quality: selectedType === 'video' ? `${selectedQuality}` : selectedQuality,
+        platform: created.platform || platform,
+        type: selectedType,
+        thumbnailUrl: created.thumbnailUrl || '',
+        duration: created.duration,
+      };
+
+      setActiveTasks((prev) => [newTask, ...prev]);
+      setActiveTab('active');
+      triggerToast('Download started', created.title, 'info');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not start download';
+      triggerToast('Download failed', message, 'info');
     }
-
-    // Give a beautiful, realistic title to the downloading stream
-    const linkDomain = recognizedPlatform !== 'other' 
-      ? recognizedPlatform.charAt(0).toUpperCase() + recognizedPlatform.slice(1)
-      : 'Media Web';
-    const cleanTitle = `${linkDomain} Track - High Fidelity Session ${selectedQuality}`;
-
-    const newTask: ActiveTask = {
-      id: `task-${Date.now()}`,
-      title: cleanTitle,
-      size: '0 MB',
-      totalSize: selectedType === 'video' ? '410 MB' : '12 MB',
-      progress: 0,
-      speed: parseFloat((Math.random() * 15 + 11).toFixed(1)),
-      remainingSeconds: 32,
-      isPaused: false,
-      quality: selectedType === 'video' ? `${selectedQuality} UHD` : selectedQuality,
-      platform: recognizedPlatform,
-      type: selectedType,
-      thumbnailUrl: thumbnailPlaceholder,
-    };
-
-    setActiveTasks((prev) => [newTask, ...prev]);
-    
-    // Automatically navigate to 'active' task view so the progress slide is instantly visible
-    setActiveTab('active');
-    triggerToast(
-      'Download initiated',
-       cleanTitle,
-      'info'
-    );
   };
 
   const handlePauseTask = (id: string) => {
@@ -239,12 +264,13 @@ export default function App() {
   };
 
   const handleCancelTask = (id: string) => {
+    const task = activeTasks.find((t) => t.id === id);
+    if (task?.jobId) {
+      savedToDeviceRef.current.delete(task.jobId);
+      cancelJob(task.jobId).catch(() => undefined);
+    }
     setActiveTasks((prev) => prev.filter((t) => t.id !== id));
-    triggerToast(
-      'Download canceled',
-      'The extraction pipeline has been terminated.',
-      'info'
-    );
+    triggerToast('Download canceled', 'Stopped on server.', 'info');
   };
 
   const handleDeleteLibraryItem = (id: string) => {

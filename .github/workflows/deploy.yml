@@ -49,8 +49,10 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Pack dist
-        run: tar -czf dist.tar.gz -C dist .
+      - name: Pack dist and API
+        run: |
+          tar -czf dist.tar.gz -C dist .
+          tar -czf server.tar.gz server package.json package-lock.json ecosystem.config.cjs
 
       - name: Load SSH key
         uses: webfactory/ssh-agent@v0.9.0
@@ -69,25 +71,33 @@ jobs:
       - name: Prepare folders on VPS
         run: |
           ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
-            "mkdir -p /tmp/vidmate-deploy /var/www/vidmate"
+            "mkdir -p /tmp/vidmate-deploy /var/www/vidmate /var/www/vidmate-api"
 
-      - name: Upload archive to VPS
+      - name: Upload archives to VPS
         run: |
-          scp -o ConnectTimeout=60 dist.tar.gz \
-            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/vidmate-deploy/dist.tar.gz"
+          scp -o ConnectTimeout=60 dist.tar.gz server.tar.gz \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/vidmate-deploy/"
           echo "Upload finished."
 
-      - name: Extract website files
+      - name: Extract website and API
+        env:
+          WEB_ROOT: ${{ secrets.VPS_WEB_ROOT || '/var/www/vidmate' }}
         run: |
-          WEB_ROOT="${{ secrets.VPS_WEB_ROOT }}"
-          if [ -z "$WEB_ROOT" ]; then WEB_ROOT="/var/www/vidmate"; fi
-          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" << ENDSSH
-          set -e
-          test -f /tmp/vidmate-deploy/dist.tar.gz
-          mkdir -p "$WEB_ROOT"
-          tar -xzf /tmp/vidmate-deploy/dist.tar.gz -C "$WEB_ROOT"
-          chown -R www-data:www-data "$WEB_ROOT" 2>/dev/null || true
-          rm -f /tmp/vidmate-deploy/dist.tar.gz
-          ls -la "$WEB_ROOT" | head -15
-          echo "Deployed to $WEB_ROOT"
-          ENDSSH
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "set -e
+            WEB_ROOT='${WEB_ROOT}'
+            test -f /tmp/vidmate-deploy/dist.tar.gz
+            test -f /tmp/vidmate-deploy/server.tar.gz
+            mkdir -p \"\$WEB_ROOT\" /var/www/vidmate-api
+            tar -xzf /tmp/vidmate-deploy/dist.tar.gz -C \"\$WEB_ROOT\"
+            tar -xzf /tmp/vidmate-deploy/server.tar.gz -C /var/www/vidmate-api
+            chown -R www-data:www-data \"\$WEB_ROOT\" 2>/dev/null || true
+            cd /var/www/vidmate-api && npm install --omit=dev --ignore-scripts
+            if command -v pm2 >/dev/null 2>&1; then
+              pm2 restart vidmate-api 2>/dev/null || pm2 start ecosystem.config.cjs
+              pm2 save 2>/dev/null || true
+            else
+              echo 'WARN: install pm2 on VPS for downloads API'
+            fi
+            rm -f /tmp/vidmate-deploy/dist.tar.gz /tmp/vidmate-deploy/server.tar.gz
+            echo Deployed site and API"

@@ -75,22 +75,7 @@ export const INITIAL_LIBRARY_ITEMS: LibraryItem[] = [
   }
 ];
 
-export const INITIAL_ACTIVE_TASKS: ActiveTask[] = [
-  {
-    id: 'task-1',
-    title: 'Cyberpunk Cityscape - Cinematic Drone 4K',
-    size: '768 MB',
-    totalSize: '1.2 GB',
-    progress: 64,
-    speed: 12.4,
-    remainingSeconds: 45,
-    isPaused: false,
-    quality: '4K UHD',
-    platform: 'youtube',
-    type: 'video',
-    thumbnailUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBWWFn3GIyHQ39OTJ5ztToHmVCNrbxV_Wn1Xgw1GdOgKVir40X5bS1ZeC7MeGaM4yeGK0WIUbL9FAhK8HqWARCW5NbKR2Z5EDMD-OXxPxhhCtwPDseHs_YP0y0hFkv1ydvBCLfVEDbsKQruUFbbgIZeGDoBIR16DIM-fCex8fhwvBTdgDHIPBvMi-xnCPkkGMwHbNpeBli6d7QlbTMzc0ZTg9bPieNYCwF7oZoYEKPxRMhmnwNZLewyemHUQtcBRpOycKwRJr-w3RM'
-  }
-];
+export const INITIAL_ACTIVE_TASKS: ActiveTask[] = [];
 
 export const SUPPORTED_PLATFORMS = [
   { id: 'youtube', name: 'YouTube', icon: 'Youtube', color: '#ff0000', exampleUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },

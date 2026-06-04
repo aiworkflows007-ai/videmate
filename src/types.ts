@@ -13,6 +13,9 @@ export interface LibraryItem {
 
 export interface ActiveTask {
   id: string;
+  /** Server job id when using real downloads */
+  jobId?: string;
+  sourceUrl?: string;
   title: string;
   size: string;
   totalSize: string;
@@ -24,6 +27,8 @@ export interface ActiveTask {
   platform: 'youtube' | 'instagram' | 'tiktok' | 'twitter' | 'facebook' | 'vimeo' | 'other';
   type: 'video' | 'audio';
   thumbnailUrl: string;
+  duration?: string;
+  filename?: string;
 }
 
 export interface AppSettings {
