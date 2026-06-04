@@ -1,5 +1,4 @@
-# Build Vidmate and deploy static files to Hostinger VPS on push to main.
-# Required secrets: see deploy/github-actions.md
+# Build Vidmate and deploy to Hostinger VPS (SSH + scp — clearer errors than scp-action)
 
 name: Deploy to VPS
 
@@ -16,17 +15,22 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
-    env:
-      WEB_ROOT: ${{ secrets.VPS_WEB_ROOT || '/var/www/vidmate' }}
-
     steps:
+      - name: Check required secrets
+        run: |
+          missing=0
+          if [ -z "${{ secrets.VPS_HOST }}" ]; then echo "::error::Missing VPS_HOST"; missing=1; fi
+          if [ -z "${{ secrets.VPS_USER }}" ]; then echo "::error::Missing VPS_USER"; missing=1; fi
+          if [ -z "${{ secrets.VPS_SSH_KEY }}" ]; then echo "::error::Missing VPS_SSH_KEY"; missing=1; fi
+          if [ "$missing" -eq 1 ]; then exit 1; fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
 
       - name: Install dependencies
@@ -48,26 +52,42 @@ jobs:
       - name: Pack dist
         run: tar -czf dist.tar.gz -C dist .
 
-      - name: Upload archive to VPS
-        uses: appleboy/scp-action@v0.1.7
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.9.0
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: dist.tar.gz
-          target: /tmp/vidmate-deploy
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
 
-      - name: Extract and set permissions
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
-            WEB_ROOT="${{ env.WEB_ROOT }}"
-            sudo mkdir -p "$WEB_ROOT"
-            sudo tar -xzf /tmp/vidmate-deploy/dist.tar.gz -C "$WEB_ROOT"
-            sudo chown -R www-data:www-data "$WEB_ROOT"
-            rm -f /tmp/vidmate-deploy/dist.tar.gz
-            echo "Deployed to $WEB_ROOT at $(date -u)"
+      - name: Trust VPS host
+        run: ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: |
+          ssh -o BatchMode=yes -o ConnectTimeout=30 \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "echo SSH_OK && whoami && hostname"
+
+      - name: Prepare folders on VPS
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "mkdir -p /tmp/vidmate-deploy /var/www/vidmate"
+
+      - name: Upload archive to VPS
+        run: |
+          scp -o ConnectTimeout=60 dist.tar.gz \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/vidmate-deploy/dist.tar.gz"
+          echo "Upload finished."
+
+      - name: Extract website files
+        run: |
+          WEB_ROOT="${{ secrets.VPS_WEB_ROOT }}"
+          if [ -z "$WEB_ROOT" ]; then WEB_ROOT="/var/www/vidmate"; fi
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" << ENDSSH
+          set -e
+          test -f /tmp/vidmate-deploy/dist.tar.gz
+          mkdir -p "$WEB_ROOT"
+          tar -xzf /tmp/vidmate-deploy/dist.tar.gz -C "$WEB_ROOT"
+          chown -R www-data:www-data "$WEB_ROOT" 2>/dev/null || true
+          rm -f /tmp/vidmate-deploy/dist.tar.gz
+          ls -la "$WEB_ROOT" | head -15
+          echo "Deployed to $WEB_ROOT"
+          ENDSSH
