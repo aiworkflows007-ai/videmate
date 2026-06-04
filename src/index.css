@@ -1,0 +1,163 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@400;700;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  
+  --color-surface: #0a0a0a;
+  --color-surface-dim: #050505;
+  --color-surface-bright: #262626;
+  --color-surface-container-lowest: #020202;
+  --color-surface-container-low: #0f0f0f;
+  --color-surface-container: #141414;
+  --color-surface-container-high: #1c1c1c;
+  --color-surface-container-highest: #2e2e2e;
+  --color-on-surface: #f3f4f6;
+  --color-on-surface-variant: #a3a3a3;
+  --color-inverse-surface: #f3f4f6;
+  --color-inverse-on-surface: #1a1a1a;
+  --color-outline: #525252;
+  --color-outline-variant: #262626;
+  --color-surface-tint: #002bff;
+  --color-primary: #002bff;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #001fcc;
+  --color-on-primary-container: #e6ebff;
+  --color-inverse-primary: #001fcc;
+  --color-secondary: #00d2ff;
+  --color-on-secondary: #003540;
+  --color-secondary-container: #005066;
+  --color-on-secondary-container: #e0f8ff;
+  --color-tertiary: #f59e0b;
+  --color-on-tertiary: #451a03;
+  --color-tertiary-container: #78350f;
+  --color-on-tertiary-container: #fef3c7;
+  --color-error: #ef4444;
+  --color-on-error: #ffffff;
+  --color-error-container: #991b1b;
+  --color-on-error-container: #fee2e2;
+  --color-primary-fixed: #e6ebff;
+  --color-primary-fixed-dim: #99abff;
+  --color-on-primary-fixed: #000c4c;
+  --color-on-primary-fixed-variant: #001999;
+  --color-secondary-fixed: #e0f8ff;
+  --color-secondary-fixed-dim: #80e9ff;
+  --color-on-secondary-fixed: #001b22;
+  --color-on-secondary-fixed-variant: #003d4d;
+  --color-tertiary-fixed: #fef3c7;
+  --color-tertiary-fixed-dim: #fcd34d;
+  --color-on-tertiary-fixed: #451a03;
+  --color-on-tertiary-fixed-variant: #78350f;
+  --color-background-base: #0a0a0a;
+  --color-on-background: #f3f4f6;
+  --color-surface-variant: #1e1e1e;
+  --color-glass-surface: rgba(10, 10, 10, 0.75);
+  --color-glow-purple: #002bff;
+  --color-glow-blue: #00d2ff;
+  --color-brand-red: #ef4444;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
+
+@layer utilities {
+  .glass-card {
+    background: rgba(15, 15, 15, 0.8);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.7);
+  }
+
+  .glass-card-hover:hover {
+    border-color: rgba(0, 43, 255, 0.25);
+    box-shadow: 0 12px 48px -12px rgba(0, 43, 255, 0.15);
+  }
+
+  .hero-grid {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 75%);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #ffffff 0%, #002bff 50%, #00d2ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .text-gradient-hero {
+    background: linear-gradient(120deg, #fff 0%, #99abff 35%, #002bff 55%, #00d2ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .animate-fade-in {
+    animation: fade-in-up 0.6s ease-out both;
+  }
+
+  .animate-fade-in-delay-1 {
+    animation: fade-in-up 0.6s ease-out 0.1s both;
+  }
+
+  .animate-fade-in-delay-2 {
+    animation: fade-in-up 0.6s ease-out 0.2s both;
+  }
+
+  .animate-fade-in-delay-3 {
+    animation: fade-in-up 0.6s ease-out 0.35s both;
+  }
+
+  .animate-float {
+    animation: float 5s ease-in-out infinite;
+  }
+
+  .btn-shimmer {
+    background-size: 200% auto;
+    background-image: linear-gradient(
+      90deg,
+      #002bff 0%,
+      #0040ff 25%,
+      #00d2ff 50%,
+      #0040ff 75%,
+      #002bff 100%
+    );
+    animation: shimmer 4s linear infinite;
+  }
+}
+
+body {
+  background-color: #0a0a0a;
+  color: #f3f4f6;
+  font-family: "Inter", sans-serif;
+  overflow-x: hidden;
+  min-height: 100vh;
+}

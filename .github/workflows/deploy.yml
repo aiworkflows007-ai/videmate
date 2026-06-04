@@ -1,0 +1,73 @@
+# Build Vidmate and deploy static files to Hostinger VPS on push to main.
+# Required secrets: see deploy/github-actions.md
+
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      WEB_ROOT: ${{ secrets.VPS_WEB_ROOT || '/var/www/vidmate' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Create production env
+        run: |
+          cat > .env.local << EOF
+          VITE_SITE_URL=${{ secrets.VITE_SITE_URL }}
+          VITE_GOOGLE_SITE_VERIFICATION=${{ secrets.VITE_GOOGLE_SITE_VERIFICATION }}
+          VITE_ADSENSE_CLIENT=${{ secrets.VITE_ADSENSE_CLIENT }}
+          VITE_ADSENSE_SLOT_HOME=${{ secrets.VITE_ADSENSE_SLOT_HOME }}
+          VITE_ADSENSE_SLOT_SIDEBAR=${{ secrets.VITE_ADSENSE_SLOT_SIDEBAR }}
+          EOF
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack dist
+        run: tar -czf dist.tar.gz -C dist .
+
+      - name: Upload archive to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: dist.tar.gz
+          target: /tmp/vidmate-deploy
+
+      - name: Extract and set permissions
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            WEB_ROOT="${{ env.WEB_ROOT }}"
+            sudo mkdir -p "$WEB_ROOT"
+            sudo tar -xzf /tmp/vidmate-deploy/dist.tar.gz -C "$WEB_ROOT"
+            sudo chown -R www-data:www-data "$WEB_ROOT"
+            rm -f /tmp/vidmate-deploy/dist.tar.gz
+            echo "Deployed to $WEB_ROOT at $(date -u)"

@@ -1,0 +1,6 @@
+{
+  "name": "Vidmate Video Downloader",
+  "description": "High-speed, premium multi-platform media downloader dashboard featuring active download tracking, library management, and detailed configuration settings.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

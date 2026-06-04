@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://vidmate.ai-workflows.cloud/sitemap.xml
