@@ -26,6 +26,7 @@ import {
   getJobStatus,
   saveJobFileToDevice,
   cancelJob,
+  checkApiHealth,
 } from './api/download';
 
 type LegalPage = 'privacy' | 'terms' | null;
@@ -44,7 +45,8 @@ export default function App() {
   );
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>(INITIAL_LIBRARY_ITEMS);
   const [activeTasks, setActiveTasks] = useState<ActiveTask[]>(INITIAL_ACTIVE_TASKS);
-  
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+
   // Custom toast notification states
   const [toast, setToast] = useState<{ message: string; sub: string; type: 'success' | 'info' } | null>(null);
 
@@ -92,6 +94,10 @@ export default function App() {
   };
 
   const seoPage: SeoPage = legalPage ?? 'home';
+
+  useEffect(() => {
+    checkApiHealth().then(setApiOnline).catch(() => setApiOnline(false));
+  }, []);
 
   // Sync dark class on document root based on settings
   useEffect(() => {
@@ -292,6 +298,16 @@ export default function App() {
   return (
     <div className={`min-h-screen text-on-surface transition-colors duration-300 relative select-none ${settings.darkMode ? 'bg-surface' : 'bg-light-bg'}`}>
       <SeoManager page={seoPage} />
+
+      {apiOnline === false && !legalPage && (
+        <div className="fixed top-20 left-0 right-0 z-[60] px-4 pointer-events-none">
+          <div className="max-w-3xl mx-auto glass-card border-amber-500/40 bg-amber-950/90 px-4 py-3 text-center pointer-events-auto">
+            <p className="text-sm font-semibold text-amber-100">
+              Download server not connected (404). Ask your host to enable the API — see deploy/fix-api-404 steps.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Background Animated Glowing Blobs (Shift on desktop cursor movement) */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
