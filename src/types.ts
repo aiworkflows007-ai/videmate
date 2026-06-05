@@ -24,7 +24,9 @@ export interface ActiveTask {
   size: string;
   totalSize: string;
   progress: number;
-  speed: number; // in MB/s
+  speed: number;
+  /** Live label from yt-dlp e.g. "2.5 MiB/s" */
+  speedLabel?: string;
   remainingSeconds: number;
   isPaused: boolean;
   quality: string;

@@ -24,6 +24,9 @@ export interface JobStatusResponse {
   filename?: string;
   error?: string;
   duration?: string;
+  speedLabel?: string;
+  etaSeconds?: number | null;
+  downloadedLabel?: string;
 }
 
 export async function createDownloadJob(
@@ -41,6 +44,22 @@ export async function createDownloadJob(
     throw new Error(data.error || data.message || `Server error (${res.status})`);
   }
   return data;
+}
+
+/** Live progress via Server-Sent Events (updates on every yt-dlp progress line). */
+export function subscribeToJobStream(
+  jobId: string,
+  onStatus: (status: JobStatusResponse) => void
+): () => void {
+  const es = new EventSource(`${API}/jobs/${jobId}/stream`);
+  es.onmessage = (event) => {
+    try {
+      onStatus(JSON.parse(event.data) as JobStatusResponse);
+    } catch {
+      /* ignore malformed events */
+    }
+  };
+  return () => es.close();
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {

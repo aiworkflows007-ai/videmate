@@ -33,13 +33,20 @@ export function ActiveDownloadsView({
   completedItems
 }: ActiveDownloadsViewProps) {
   const primaryTask =
-    tasks.find((t) => !t.isPaused && t.status !== 'error' && t.status !== 'completed') || tasks[0];
+    tasks.find((t) => t.status === 'downloading') ||
+    tasks.find((t) => !t.isPaused && t.status !== 'error' && t.status !== 'completed') ||
+    tasks[0];
   const globalProgress = primaryTask ? Math.round(primaryTask.progress) : 0;
   
   // Simulated overall status variables
-  const globalSpeed = tasks.length > 0 
-    ? tasks.reduce((acc, t) => acc + (t.isPaused ? 0 : t.speed), 0).toFixed(1)
-    : "0.0";
+  const activeForSpeed = tasks.filter(
+    (t) => !t.isPaused && t.status !== 'error' && t.status !== 'completed'
+  );
+  const globalSpeedLabel =
+    activeForSpeed.find((t) => t.speedLabel && t.speedLabel !== '—')?.speedLabel ||
+    (activeForSpeed.reduce((acc, t) => acc + t.speed, 0) > 0
+      ? `${activeForSpeed.reduce((acc, t) => acc + t.speed, 0).toFixed(1)} MB/s`
+      : '0 MB/s');
 
   // Circular ring calculations
   const radius = 54;
@@ -139,7 +146,11 @@ export function ActiveDownloadsView({
                       </h3>
                       <p className="font-sans text-xs text-on-surface-variant flex items-center gap-1.5 font-semibold">
                         <Folder className="w-4 h-4 text-primary" />
-                        {task.type === 'audio' ? 'MP3' : 'MP4'} &bull; {task.size} of {task.totalSize}
+                        {task.type === 'audio' ? 'MP3' : 'MP4'} &bull;{' '}
+                        {task.progress > 0 && task.totalSize !== '—'
+                          ? `${Math.floor(task.progress)}%`
+                          : task.size}{' '}
+                        of {task.totalSize}
                       </p>
                     </div>
                       
@@ -149,7 +160,13 @@ export function ActiveDownloadsView({
                           {Math.floor(task.progress)}%
                         </span>
                         <span className="font-sans text-xs text-on-surface-variant font-semibold">
-                          {task.isPaused ? 'Paused' : `${task.speed} MB/s`}
+                          {task.isPaused
+                            ? 'Paused'
+                            : task.speedLabel && task.speedLabel !== '—'
+                              ? task.speedLabel
+                              : task.speed > 0
+                                ? `${task.speed} MB/s`
+                                : '—'}
                         </span>
                       </div>
                     </div>
@@ -170,21 +187,32 @@ export function ActiveDownloadsView({
                               ? 'Saved to your device'
                               : task.isPaused
                                 ? 'Paused...'
-                                : 'Downloading...'}
+                                : task.status === 'pending' && task.progress < 1
+                                  ? 'Preparing…'
+                                  : 'Downloading…'}
                         </span>
                         <span className="font-sans text-xs text-on-surface-variant font-medium">
-                          {task.isPaused 
-                            ? 'Paused in queue' 
-                            : `Est. ${task.remainingSeconds}s remaining`
-                          }
+                          {task.isPaused
+                            ? 'Paused in queue'
+                            : task.progress > 0 && task.remainingSeconds > 0
+                              ? `Est. ${task.remainingSeconds}s · ${Math.floor(task.progress)}%`
+                              : task.status === 'pending'
+                                ? 'Fetching video info…'
+                                : 'Starting…'}
                         </span>
                       </div>
 
                       {/* Main track loader */}
                       <div className="h-3 w-full bg-surface-variant rounded-full p-[1px] border border-white/5 shadow-inner relative overflow-hidden">
                         <div 
-                          className="h-full bg-gradient-to-r from-primary via-secondary to-glow-blue rounded-full relative shadow-[0_0_15px_rgba(221,183,255,0.4)] transition-all duration-300"
-                          style={{ width: `${task.progress}%` }}
+                          className={`h-full bg-gradient-to-r from-primary via-secondary to-glow-blue rounded-full relative shadow-[0_0_15px_rgba(221,183,255,0.4)] transition-[width] duration-200 ${
+                            task.progress < 2 && task.status !== 'completed' && !task.isPaused
+                              ? 'progress-bar-indeterminate min-w-[12%]'
+                              : ''
+                          }`}
+                          style={{
+                            width: `${Math.max(task.progress < 2 && task.status !== 'completed' ? 12 : 0, task.progress)}%`,
+                          }}
                         >
                           <div className="absolute right-0 top-0 bottom-0 w-2 bg-white/40 blur-sm"></div>
                         </div>
@@ -297,8 +325,8 @@ export function ActiveDownloadsView({
               <p className="font-sans font-bold text-xs text-on-surface-variant uppercase tracking-widest mb-1">
                 Global Speed
               </p>
-              <p className="font-display text-xl font-bold text-secondary flex items-baseline gap-1 animate-pulse">
-                {globalSpeed} <span className="text-xs text-on-surface-variant font-sans font-medium">MB/s</span>
+              <p className="font-display text-lg font-bold text-secondary flex items-baseline gap-1 animate-pulse">
+                {globalSpeedLabel}
               </p>
             </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Download, 
   Home, 
@@ -27,6 +27,8 @@ import {
   saveJobFileToDevice,
   cancelJob,
   checkApiHealth,
+  subscribeToJobStream,
+  type JobStatusResponse,
 } from './api/download';
 
 type LegalPage = 'privacy' | 'terms' | null;
@@ -111,150 +113,188 @@ export default function App() {
   }, [settings.darkMode]);
 
   const savedToDeviceRef = useRef<Set<string>>(new Set());
+  const activeTasksRef = useRef(activeTasks);
+  activeTasksRef.current = activeTasks;
 
-  // Poll real server downloads and save files to the user's device
-  useEffect(() => {
-    const jobIds = activeTasks.map((t) => t.jobId).filter(Boolean) as string[];
-    if (jobIds.length === 0) return;
-
-    let stopped = false;
-
-    const poll = async () => {
-      if (stopped) return;
-
-      for (const task of activeTasks) {
-        if (
-          !task.jobId ||
-          task.isPaused ||
-          task.status === 'error' ||
-          task.status === 'completed' ||
-          savedToDeviceRef.current.has(task.jobId)
-        ) {
-          continue;
-        }
-
-        try {
-          const status = await getJobStatus(task.jobId);
-
-          if (status.status === 'error') {
-            setActiveTasks((prev) =>
-              prev.map((t) =>
-                t.jobId === task.jobId
-                  ? {
-                      ...t,
-                      status: 'error',
-                      errorMessage: status.error || 'Download failed on server',
-                      progress: 0,
-                      speed: 0,
-                    }
-                  : t
-              )
-            );
-            triggerToast('Download failed', status.error || task.title, 'info');
-            continue;
-          }
-
-          if (status.status !== 'ready') {
-            setActiveTasks((prev) =>
-              prev.map((t) =>
-                t.jobId === task.jobId
-                  ? {
-                      ...t,
-                      status: status.status === 'downloading' ? 'downloading' : 'pending',
-                      errorMessage: undefined,
-                      title: status.title || t.title,
-                      progress: status.progress ?? t.progress,
-                      totalSize: status.totalSize || t.totalSize,
-                      size: status.size || t.size,
-                      thumbnailUrl: status.thumbnailUrl || t.thumbnailUrl,
-                      duration: status.duration || t.duration,
-                      speed: Math.max(t.speed, 1.2),
-                      remainingSeconds: Math.max(
-                        5,
-                        Math.round((100 - (status.progress || 0)) / 8)
-                      ),
-                    }
-                  : t
-              )
-            );
-            continue;
-          }
-
-          if (!status.filename) continue;
-
-          savedToDeviceRef.current.add(task.jobId);
-          await saveJobFileToDevice(task.jobId, status.filename);
-
-          const completedId = `lib-${Date.now()}`;
-          const newItem: LibraryItem = {
-            id: completedId,
-            title: status.title || task.title,
-            type: task.type,
-            size: status.totalSize || task.totalSize,
-            duration: status.duration || (task.type === 'video' ? '—' : '—'),
-            dateString: 'Just now',
-            quality: task.quality,
-            platform: (status.platform as LibraryItem['platform']) || task.platform,
-            thumbnailUrl: status.thumbnailUrl || task.thumbnailUrl,
-            category: task.type === 'video' ? 'Videos / Downloaded' : 'Audio / Extract',
-          };
-
-          setLibraryItems((prevLib) => [newItem, ...prevLib]);
-          setActiveTasks((prev) =>
-            prev.map((t) =>
-              t.jobId === task.jobId
-                ? { ...t, status: 'completed', progress: 100, speed: 0, remainingSeconds: 0 }
-                : t
-            )
-          );
-          window.setTimeout(() => {
-            setActiveTasks((prev) => prev.filter((t) => t.jobId !== task.jobId));
-          }, 8000);
-          setSettings((prevSet) => {
-            const fileWeight = task.type === 'video' ? 0.45 : 0.01;
-            return {
-              ...prevSet,
-              systemStorageUsed: Math.min(
-                prevSet.systemStorageTotal,
-                prevSet.systemStorageUsed + fileWeight
-              ),
-            };
-          });
-          triggerToast('Saved to your device', status.title || task.title, 'success');
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : '';
-          if (msg.includes('not found') || msg.includes('Job not found')) {
-            setActiveTasks((prev) =>
-              prev.map((t) =>
-                t.jobId === task.jobId
-                  ? {
-                      ...t,
-                      status: 'error',
-                      errorMessage:
-                        'Download session lost (server restarted). Tap Retry to start again.',
-                      progress: 0,
-                      speed: 0,
-                    }
-                  : t
-              )
-            );
-          }
-        }
-      }
-    };
-
-    const interval = setInterval(poll, 2000);
-    poll();
-    return () => {
-      stopped = true;
-      clearInterval(interval);
-    };
-  }, [activeTasks]);
+  const pollJobIdsKey = activeTasks
+    .map((t) => t.jobId)
+    .filter(Boolean)
+    .join(',');
 
   const triggerToast = (message: string, sub: string, type: 'success' | 'info') => {
     setToast({ message, sub, type });
     setTimeout(() => setToast(null), 4000);
   };
+
+  const parseSpeedToMbps = (label?: string): number => {
+    if (!label || /measuring/i.test(label)) return 0;
+    const m = label.match(/([\d.]+)\s*(KiB|MiB|GiB)\/s/i);
+    if (!m) return 0;
+    const n = parseFloat(m[1]);
+    const unit = m[2].toLowerCase();
+    const mib = unit === 'gib' ? n * 1024 : unit === 'kib' ? n / 1024 : n;
+    return Math.round(mib * 10) / 10;
+  };
+
+  const mergeStatusIntoTask = (item: ActiveTask, status: JobStatusResponse): ActiveTask => {
+    const serverProgress = Number(status.progress) || 0;
+    const progress = Math.max(item.progress, serverProgress);
+    const eta =
+      status.etaSeconds != null && status.etaSeconds > 0
+        ? status.etaSeconds
+        : progress > 0
+          ? Math.max(5, Math.round(((100 - progress) / Math.max(progress, 1)) * 3))
+          : item.remainingSeconds;
+    const speedLabel =
+      status.speedLabel && status.speedLabel !== '—' ? status.speedLabel : item.speedLabel;
+    return {
+      ...item,
+      status:
+        status.status === 'downloading'
+          ? 'downloading'
+          : status.status === 'ready'
+            ? 'completed'
+            : status.status === 'error'
+              ? 'error'
+              : 'pending',
+      errorMessage: status.status === 'error' ? status.error || 'Download failed' : undefined,
+      title: status.title || item.title,
+      progress: status.status === 'ready' ? 100 : progress,
+      totalSize: status.totalSize && status.totalSize !== '—' ? status.totalSize : item.totalSize,
+      size: status.downloadedLabel || status.size || item.size,
+      thumbnailUrl: status.thumbnailUrl || item.thumbnailUrl,
+      duration: status.duration || item.duration,
+      speedLabel: status.status === 'ready' ? 'Done' : speedLabel,
+      speed: parseSpeedToMbps(speedLabel) || item.speed,
+      remainingSeconds: status.status === 'ready' ? 0 : eta,
+    };
+  };
+
+  const finishJobDownload = useCallback(
+    async (jobId: string, status: JobStatusResponse) => {
+      if (!status.filename || savedToDeviceRef.current.has(jobId)) return;
+      savedToDeviceRef.current.add(jobId);
+
+      const snapshot = activeTasksRef.current.find((t) => t.jobId === jobId);
+      try {
+        await saveJobFileToDevice(jobId, status.filename);
+      } catch (err) {
+        savedToDeviceRef.current.delete(jobId);
+        const message = err instanceof Error ? err.message : 'Save failed';
+        setActiveTasks((prev) =>
+          prev.map((t) =>
+            t.jobId === jobId ? { ...t, status: 'error', errorMessage: message } : t
+          )
+        );
+        return;
+      }
+
+      setActiveTasks((prev) => {
+        const task = prev.find((t) => t.jobId === jobId);
+        if (!task) return prev;
+
+        const newItem: LibraryItem = {
+          id: `lib-${Date.now()}`,
+          title: status.title || task.title,
+          type: task.type,
+          size: status.totalSize || task.totalSize,
+          duration: status.duration || '—',
+          dateString: 'Just now',
+          quality: task.quality,
+          platform: (status.platform as LibraryItem['platform']) || task.platform,
+          thumbnailUrl: status.thumbnailUrl || task.thumbnailUrl,
+          category: task.type === 'video' ? 'Videos / Downloaded' : 'Audio / Extract',
+        };
+
+        setLibraryItems((prevLib) => [newItem, ...prevLib]);
+        setSettings((prevSet) => {
+          const fileWeight = task.type === 'video' ? 0.45 : 0.01;
+          return {
+            ...prevSet,
+            systemStorageUsed: Math.min(
+              prevSet.systemStorageTotal,
+              prevSet.systemStorageUsed + fileWeight
+            ),
+          };
+        });
+        triggerToast('Saved to your device', status.title || task.title, 'success');
+
+        return prev.map((t) =>
+          t.jobId === jobId ? mergeStatusIntoTask(t, { ...status, status: 'ready', progress: 100 }) : t
+        );
+      });
+
+      window.setTimeout(() => {
+        setActiveTasks((prev) => prev.filter((t) => t.jobId !== jobId));
+      }, 8000);
+    },
+    []
+  );
+
+  const handleJobStatusUpdate = useCallback(
+    (jobId: string, status: JobStatusResponse) => {
+      const snapshot = activeTasksRef.current.find((t) => t.jobId === jobId);
+      if (!snapshot || snapshot.isPaused) return;
+      if (snapshot.status === 'completed' || snapshot.status === 'error') return;
+
+      if (status.status === 'error') {
+        setActiveTasks((prev) =>
+          prev.map((t) => (t.jobId === jobId ? mergeStatusIntoTask(t, status) : t))
+        );
+        triggerToast('Download failed', status.error || snapshot.title, 'info');
+        return;
+      }
+
+      if (status.status === 'ready') {
+        setActiveTasks((prev) =>
+          prev.map((t) => (t.jobId === jobId ? mergeStatusIntoTask(t, status) : t))
+        );
+        void finishJobDownload(jobId, status);
+        return;
+      }
+
+      setActiveTasks((prev) =>
+        prev.map((t) => (t.jobId === jobId ? mergeStatusIntoTask(t, status) : t))
+      );
+    },
+    [finishJobDownload]
+  );
+
+  // Live progress stream (pushes every yt-dlp progress line)
+  useEffect(() => {
+    const jobIds = pollJobIdsKey ? pollJobIdsKey.split(',') : [];
+    if (jobIds.length === 0) return;
+    const unsubs = jobIds.map((jobId) =>
+      subscribeToJobStream(jobId, (status) => handleJobStatusUpdate(jobId, status))
+    );
+    return () => unsubs.forEach((u) => u());
+  }, [pollJobIdsKey, handleJobStatusUpdate]);
+
+  // Fallback poll if SSE disconnects
+  useEffect(() => {
+    const jobIds = pollJobIdsKey ? pollJobIdsKey.split(',') : [];
+    if (jobIds.length === 0) return;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      for (const jobId of jobIds) {
+        if (savedToDeviceRef.current.has(jobId)) continue;
+        const snap = activeTasksRef.current.find((t) => t.jobId === jobId);
+        if (!snap || snap.isPaused || snap.status === 'completed' || snap.status === 'error') continue;
+        try {
+          const status = await getJobStatus(jobId);
+          handleJobStatusUpdate(jobId, status);
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    const interval = setInterval(tick, 2000);
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
+  }, [pollJobIdsKey, handleJobStatusUpdate]);
 
   const detectPlatform = (urlString: string): ActiveTask['platform'] => {
     const lowerUrl = urlString.toLowerCase();
@@ -273,35 +313,60 @@ export default function App() {
     selectedType: 'video' | 'audio'
   ) => {
     const platform = detectPlatform(urlString);
+    const qualityForJob = selectedType === 'audio' ? 'MP3' : selectedQuality;
+    const placeholderId = `task-${Date.now()}`;
+
+    const placeholder: ActiveTask = {
+      id: placeholderId,
+      sourceUrl: urlString,
+      status: 'pending',
+      title: 'Connecting to server…',
+      size: '0 B',
+      totalSize: '…',
+      progress: 0,
+      speed: 0,
+      speedLabel: '—',
+      remainingSeconds: 0,
+      isPaused: false,
+      quality: qualityForJob,
+      platform,
+      type: selectedType,
+      thumbnailUrl: '',
+    };
+
+    setActiveTasks((prev) => [placeholder, ...prev]);
+    setActiveTab('active');
 
     try {
-      const qualityForJob = selectedType === 'audio' ? 'MP3' : selectedQuality;
       const created = await createDownloadJob(urlString, qualityForJob, selectedType);
 
-      const newTask: ActiveTask = {
-        id: `task-${Date.now()}`,
-        jobId: created.jobId,
-        sourceUrl: urlString,
-        status: 'pending',
-        title: created.title,
-        size: '0 MB',
-        totalSize: '…',
-        progress: 0,
-        speed: 0,
-        remainingSeconds: 60,
-        isPaused: false,
-        quality: qualityForJob,
-        platform: created.platform || platform,
-        type: selectedType,
-        thumbnailUrl: created.thumbnailUrl || '',
-        duration: created.duration,
-      };
-
-      setActiveTasks((prev) => [newTask, ...prev]);
-      setActiveTab('active');
+      setActiveTasks((prev) =>
+        prev.map((t) =>
+          t.id === placeholderId
+            ? {
+                ...t,
+                jobId: created.jobId,
+                status: 'pending',
+                title: created.title || 'Preparing download…',
+                thumbnailUrl: created.thumbnailUrl || t.thumbnailUrl,
+                platform: created.platform || platform,
+                duration: created.duration,
+                progress: 0,
+                speedLabel: '—',
+              }
+            : t
+        )
+      );
       triggerToast('Download started', created.title, 'info');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not start download';
+      setActiveTasks((prev) =>
+        prev.map((t) =>
+          t.id === placeholderId
+            ? { ...t, status: 'error', errorMessage: message, progress: 0, speed: 0, speedLabel: '—' }
+            : t
+        )
+      );
       triggerToast('Download failed', message, 'info');
     }
   };
