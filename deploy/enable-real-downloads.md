@@ -65,7 +65,9 @@ systemctl reload nginx
 | Facebook | `facebook.com/watch`, `fb.watch/...` |
 | Vimeo | `vimeo.com/123456` |
 
-**Instagram & Facebook:** Some videos need login. Optional: export browser cookies to `/var/www/vidmate-api/cookies.txt` and set in `ecosystem.config.cjs`:
+**YouTube (bot check on VPS):** See **[deploy/youtube-cookies.md](youtube-cookies.md)** — export browser cookies and upload `cookies.txt`.
+
+**Instagram & Facebook:** Some videos need login. Same `cookies.txt` path (already set in `ecosystem.config.cjs` after deploy):
 
 ```js
 YTDLP_COOKIES_FILE: '/var/www/vidmate-api/cookies.txt',

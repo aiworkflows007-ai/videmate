@@ -275,7 +275,8 @@ export default function App() {
     const platform = detectPlatform(urlString);
 
     try {
-      const created = await createDownloadJob(urlString, selectedQuality, selectedType);
+      const qualityForJob = selectedType === 'audio' ? 'MP3' : selectedQuality;
+      const created = await createDownloadJob(urlString, qualityForJob, selectedType);
 
       const newTask: ActiveTask = {
         id: `task-${Date.now()}`,
@@ -289,7 +290,7 @@ export default function App() {
         speed: 0,
         remainingSeconds: 60,
         isPaused: false,
-        quality: selectedType === 'video' ? `${selectedQuality}` : selectedQuality,
+        quality: qualityForJob,
         platform: created.platform || platform,
         type: selectedType,
         thumbnailUrl: created.thumbnailUrl || '',
@@ -336,8 +337,14 @@ export default function App() {
   const handleRetryTask = async (id: string) => {
     const task = activeTasks.find((t) => t.id === id);
     if (!task?.sourceUrl) return;
+    const quality =
+      task.type === 'audio'
+        ? 'MP3'
+        : ['4K', '1080P', '720P'].includes(task.quality)
+          ? task.quality
+          : '720P';
     handleDismissTask(id);
-    await handleStartDownload(task.sourceUrl, task.quality, task.type);
+    await handleStartDownload(task.sourceUrl, quality, task.type);
   };
 
   const handleDeleteLibraryItem = (id: string) => {

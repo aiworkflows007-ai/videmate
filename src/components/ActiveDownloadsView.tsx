@@ -139,7 +139,7 @@ export function ActiveDownloadsView({
                       </h3>
                       <p className="font-sans text-xs text-on-surface-variant flex items-center gap-1.5 font-semibold">
                         <Folder className="w-4 h-4 text-primary" />
-                        {task.type === 'video' ? 'MP4' : 'MP3'} &bull; {task.size} of {task.totalSize}
+                        {task.type === 'audio' ? 'MP3' : 'MP4'} &bull; {task.size} of {task.totalSize}
                       </p>
                     </div>
                       

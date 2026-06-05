@@ -23,13 +23,45 @@ const jobs = new Map();
 
 await fsp.mkdir(JOBS_DIR, { recursive: true });
 
-function formatSelector(type, quality) {
+function parseMaxHeight(quality) {
+  const q = String(quality || '').toUpperCase();
+  if (q.includes('4K') || q.includes('2160') || q.includes('ULTRA')) return 2160;
+  if (q.includes('1440') || q.includes('QHD')) return 1440;
+  if (q.includes('720')) return 720;
+  if (q.includes('480')) return 480;
+  return 1080;
+}
+
+/** Ordered yt-dlp format attempts (retried when a format is unavailable). */
+function formatAttempts(type, quality) {
   if (type === 'audio') {
-    return ['-x', '--audio-format', 'mp3', '-f', 'bestaudio/best'];
+    return [
+      ['-f', 'ba/b/bestaudio[ext=m4a]/bestaudio/best/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0'],
+      ['-f', 'best/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0'],
+      ['-f', 'b', '-x', '--audio-format', 'mp3'],
+    ];
   }
-  const height =
-    quality === '4K' ? 2160 : quality === '720P' ? 720 : quality === '1080P' ? 1080 : 1080;
-  return ['-f', `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`];
+  const height = parseMaxHeight(quality);
+  const videoMerge = ['--merge-output-format', 'mp4'];
+  return [
+    [
+      '-f',
+      [
+        `bestvideo[height<=${height}]+bestaudio`,
+        `best[height<=${height}]`,
+        'bestvideo+bestaudio',
+        'best',
+      ].join('/'),
+      ...videoMerge,
+    ],
+    ['-f', 'bestvideo+bestaudio/best', ...videoMerge],
+    ['-f', 'best', ...videoMerge],
+  ];
+}
+
+function isFormatUnavailableError(message) {
+  const msg = message || '';
+  return msg.includes('format is not available') || msg.includes('Requested format is not available');
 }
 
 function runYtDlp(args, onProgress) {
@@ -77,8 +109,7 @@ function buildYtDlpArgs(url, extraArgs) {
     args.push('--add-header', 'Referer:https://www.tiktok.com/');
   }
   if (platform === 'youtube') {
-    // Reduces "Sign in to confirm you're not a bot" on datacenter IPs
-    args.push('--extractor-args', 'youtube:player_client=android,web');
+    args.push('--extractor-args', 'youtube:player_client=android,web,mweb');
   }
 
   if (COOKIES_FILE && fs.existsSync(COOKIES_FILE)) {
@@ -96,10 +127,16 @@ async function fetchMeta(url) {
   return JSON.parse(stdout.trim().split('\n').pop());
 }
 
-function friendlyError(platform, raw) {
+function friendlyError(platform, raw, type = 'video') {
   const msg = raw || '';
   if (platform === 'youtube' && (msg.includes('not a bot') || msg.includes('Sign in'))) {
     return 'YouTube blocked this server (bot check). Upload browser cookies to the server (cookies.txt) or try Instagram/TikTok/Vimeo links.';
+  }
+  if (isFormatUnavailableError(msg)) {
+    if (type === 'audio') {
+      return 'Could not extract audio from this link. Try another video or a different platform (Vimeo/TikTok often work).';
+    }
+    return 'That video quality is not available. Try 720P or switch to Audio only.';
   }
   if (
     (platform === 'instagram' || platform === 'facebook') &&
@@ -119,16 +156,22 @@ async function runJob(job) {
   job.progress = 0;
 
   try {
-    const formatArgs = formatSelector(job.type, job.quality);
-    const args = buildYtDlpArgs(job.url, [
-      '-o',
-      outTemplate,
-      ...formatArgs,
-      ...(job.type === 'video' ? ['--merge-output-format', 'mp4'] : []),
-    ]);
-    await runYtDlp(args, (pct) => {
-      job.progress = Math.min(99, pct);
-    });
+    const attempts = formatAttempts(job.type, job.quality);
+    let lastErr = null;
+    for (const formatArgs of attempts) {
+      try {
+        const args = buildYtDlpArgs(job.url, ['-o', outTemplate, ...formatArgs]);
+        await runYtDlp(args, (pct) => {
+          job.progress = Math.min(99, pct);
+        });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (!isFormatUnavailableError(err.message)) throw err;
+      }
+    }
+    if (lastErr) throw lastErr;
 
     const files = await fsp.readdir(jobDir);
     const media = files.find((f) => !f.endsWith('.part') && !f.endsWith('.json'));
@@ -144,7 +187,7 @@ async function runJob(job) {
     job.size = job.totalSize;
   } catch (err) {
     job.status = 'error';
-    job.error = friendlyError(job.platform, err.message || String(err));
+    job.error = friendlyError(job.platform, err.message || String(err), job.type);
   }
 }
 

@@ -12,6 +12,7 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3017,
         YTDLP_PATH: '/usr/local/bin/yt-dlp',
+        YTDLP_COOKIES_FILE: '/var/www/vidmate-api/cookies.txt',
         JOBS_DIR: '/var/www/vidmate-api/.data/jobs',
       },
     },
