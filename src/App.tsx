@@ -123,13 +123,33 @@ export default function App() {
       if (stopped) return;
 
       for (const task of activeTasks) {
-        if (!task.jobId || task.isPaused || savedToDeviceRef.current.has(task.jobId)) continue;
+        if (
+          !task.jobId ||
+          task.isPaused ||
+          task.status === 'error' ||
+          task.status === 'completed' ||
+          savedToDeviceRef.current.has(task.jobId)
+        ) {
+          continue;
+        }
 
         try {
           const status = await getJobStatus(task.jobId);
 
           if (status.status === 'error') {
-            setActiveTasks((prev) => prev.filter((t) => t.jobId !== task.jobId));
+            setActiveTasks((prev) =>
+              prev.map((t) =>
+                t.jobId === task.jobId
+                  ? {
+                      ...t,
+                      status: 'error',
+                      errorMessage: status.error || 'Download failed on server',
+                      progress: 0,
+                      speed: 0,
+                    }
+                  : t
+              )
+            );
             triggerToast('Download failed', status.error || task.title, 'info');
             continue;
           }
@@ -140,6 +160,8 @@ export default function App() {
                 t.jobId === task.jobId
                   ? {
                       ...t,
+                      status: status.status === 'downloading' ? 'downloading' : 'pending',
+                      errorMessage: undefined,
                       title: status.title || t.title,
                       progress: status.progress ?? t.progress,
                       totalSize: status.totalSize || t.totalSize,
@@ -178,7 +200,16 @@ export default function App() {
           };
 
           setLibraryItems((prevLib) => [newItem, ...prevLib]);
-          setActiveTasks((prev) => prev.filter((t) => t.jobId !== task.jobId));
+          setActiveTasks((prev) =>
+            prev.map((t) =>
+              t.jobId === task.jobId
+                ? { ...t, status: 'completed', progress: 100, speed: 0, remainingSeconds: 0 }
+                : t
+            )
+          );
+          window.setTimeout(() => {
+            setActiveTasks((prev) => prev.filter((t) => t.jobId !== task.jobId));
+          }, 8000);
           setSettings((prevSet) => {
             const fileWeight = task.type === 'video' ? 0.45 : 0.01;
             return {
@@ -190,8 +221,24 @@ export default function App() {
             };
           });
           triggerToast('Saved to your device', status.title || task.title, 'success');
-        } catch {
-          /* network blip — try again on next poll */
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : '';
+          if (msg.includes('not found') || msg.includes('Job not found')) {
+            setActiveTasks((prev) =>
+              prev.map((t) =>
+                t.jobId === task.jobId
+                  ? {
+                      ...t,
+                      status: 'error',
+                      errorMessage:
+                        'Download session lost (server restarted). Tap Retry to start again.',
+                      progress: 0,
+                      speed: 0,
+                    }
+                  : t
+              )
+            );
+          }
         }
       }
     };
@@ -234,6 +281,7 @@ export default function App() {
         id: `task-${Date.now()}`,
         jobId: created.jobId,
         sourceUrl: urlString,
+        status: 'pending',
         title: created.title,
         size: '0 MB',
         totalSize: '…',
@@ -277,6 +325,19 @@ export default function App() {
     }
     setActiveTasks((prev) => prev.filter((t) => t.id !== id));
     triggerToast('Download canceled', 'Stopped on server.', 'info');
+  };
+
+  const handleDismissTask = (id: string) => {
+    const task = activeTasks.find((t) => t.id === id);
+    if (task?.jobId) savedToDeviceRef.current.delete(task.jobId);
+    setActiveTasks((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const handleRetryTask = async (id: string) => {
+    const task = activeTasks.find((t) => t.id === id);
+    if (!task?.sourceUrl) return;
+    handleDismissTask(id);
+    await handleStartDownload(task.sourceUrl, task.quality, task.type);
   };
 
   const handleDeleteLibraryItem = (id: string) => {
@@ -353,6 +414,8 @@ export default function App() {
             onPauseTask={handlePauseTask}
             onResumeTask={handleResumeTask}
             onCancelTask={handleCancelTask}
+            onDismissTask={handleDismissTask}
+            onRetryTask={handleRetryTask}
             completedItems={libraryItems}
           />
         )}

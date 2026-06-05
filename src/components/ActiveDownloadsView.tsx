@@ -6,11 +6,10 @@ import {
   Folder, 
   Bolt, 
   CheckCircle2, 
-  ArrowRight,
   Music,
-  Video,
-  Sparkles,
-  DownloadCloud
+  DownloadCloud,
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 import { ActiveTask, LibraryItem } from '../types';
 
@@ -19,6 +18,8 @@ interface ActiveDownloadsViewProps {
   onPauseTask: (id: string) => void;
   onResumeTask: (id: string) => void;
   onCancelTask: (id: string) => void;
+  onDismissTask: (id: string) => void;
+  onRetryTask: (id: string) => void;
   completedItems: LibraryItem[];
 }
 
@@ -27,10 +28,12 @@ export function ActiveDownloadsView({
   onPauseTask,
   onResumeTask,
   onCancelTask,
+  onDismissTask,
+  onRetryTask,
   completedItems
 }: ActiveDownloadsViewProps) {
-  // Take the first active task for the prominent statistics ring to match the top design mockup
-  const primaryTask = tasks.find(t => !t.isPaused) || tasks[0];
+  const primaryTask =
+    tasks.find((t) => !t.isPaused && t.status !== 'error' && t.status !== 'completed') || tasks[0];
   const globalProgress = primaryTask ? Math.round(primaryTask.progress) : 0;
   
   // Simulated overall status variables
@@ -82,10 +85,19 @@ export function ActiveDownloadsView({
           
           {/* Primary Progress Card (Large Glass Container) - spans 8 cols */}
           <div className="lg:col-span-8 space-y-6">
-            {tasks.map((task) => (
+            {tasks.map((task) => {
+              const isError = task.status === 'error';
+              const isCompleted = task.status === 'completed';
+              return (
               <div 
                 key={task.id} 
-                className="glass-card rounded-xl p-6 md:p-8 relative overflow-hidden group transition-all duration-350 border border-white/10 hover:border-primary/20 hover:shadow-[0_0_20px_rgba(221,183,255,0.05)]"
+                className={`glass-card rounded-xl p-6 md:p-8 relative overflow-hidden group transition-all duration-350 border ${
+                  isError
+                    ? 'border-amber-500/40 hover:border-amber-500/50'
+                    : isCompleted
+                      ? 'border-secondary/40 hover:border-secondary/50'
+                      : 'border-white/10 hover:border-primary/20 hover:shadow-[0_0_20px_rgba(221,183,255,0.05)]'
+                }`}
               >
                 <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16 blur-2xl"></div>
                 
@@ -145,8 +157,20 @@ export function ActiveDownloadsView({
                     {/* Linear progress sliders */}
                     <div className="mt-4">
                       <div className="flex justify-between items-center mb-2.5">
-                        <span className="font-sans text-xs text-secondary font-bold uppercase tracking-widest animate-pulse">
-                          {task.isPaused ? 'Paused...' : 'Downloading...'}
+                        <span className={`font-sans text-xs font-bold uppercase tracking-widest ${
+                          isError
+                            ? 'text-amber-400'
+                            : isCompleted
+                              ? 'text-secondary'
+                              : 'text-secondary animate-pulse'
+                        }`}>
+                          {isError
+                            ? 'Failed'
+                            : isCompleted
+                              ? 'Saved to your device'
+                              : task.isPaused
+                                ? 'Paused...'
+                                : 'Downloading...'}
                         </span>
                         <span className="font-sans text-xs text-on-surface-variant font-medium">
                           {task.isPaused 
@@ -166,9 +190,40 @@ export function ActiveDownloadsView({
                         </div>
                       </div>
 
+                      {isError && task.errorMessage && (
+                        <p className="mt-3 text-xs text-amber-100/90 leading-relaxed font-sans border border-amber-500/20 rounded-lg px-3 py-2 bg-amber-950/40">
+                          {task.errorMessage}
+                        </p>
+                      )}
+
                       {/* Control buttons */}
                       <div className="flex flex-wrap gap-4 mt-6">
-                        {task.isPaused ? (
+                        {isError ? (
+                          <>
+                            <button
+                              onClick={() => onRetryTask(task.id)}
+                              className="px-6 py-2.5 rounded-full bg-gradient-to-r from-primary to-secondary text-on-primary font-sans font-semibold text-xs flex items-center gap-2 hover:shadow-[0_0_20px_rgba(183,109,255,0.3)] transition-all duration-200 active:scale-95 cursor-pointer"
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                              Retry
+                            </button>
+                            <button
+                              onClick={() => onDismissTask(task.id)}
+                              className="px-6 py-2.5 rounded-full glass-card text-on-surface-variant hover:text-white border-white/10 font-sans font-semibold text-xs flex items-center gap-2 transition-all duration-200 active:scale-95 cursor-pointer"
+                            >
+                              <X className="w-4 h-4" />
+                              Dismiss
+                            </button>
+                          </>
+                        ) : isCompleted ? (
+                          <button
+                            onClick={() => onDismissTask(task.id)}
+                            className="px-6 py-2.5 rounded-full bg-secondary/20 text-secondary border border-secondary/30 font-sans font-semibold text-xs flex items-center gap-2 transition-all duration-200 active:scale-95 cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            Done
+                          </button>
+                        ) : task.isPaused ? (
                           <button
                             onClick={() => onResumeTask(task.id)}
                             className="px-6 py-2.5 rounded-full bg-gradient-to-r from-primary to-secondary text-on-primary font-sans font-semibold text-xs flex items-center gap-2 hover:shadow-[0_0_20px_rgba(183,109,255,0.3)] transition-all duration-200 active:scale-95 cursor-pointer"
@@ -185,19 +240,22 @@ export function ActiveDownloadsView({
                             Pause Download
                           </button>
                         )}
-                        <button
-                          onClick={() => onCancelTask(task.id)}
-                          className="px-6 py-2.5 rounded-full glass-card text-on-surface-variant hover:text-brand-red border-white/10 hover:border-brand-red/30 font-sans font-semibold text-xs flex items-center gap-2 transition-all duration-200 active:scale-95 cursor-pointer"
-                        >
-                          <X className="w-4 h-4" />
-                          Cancel
-                        </button>
+                        {!isCompleted && (
+                          <button
+                            onClick={() => onCancelTask(task.id)}
+                            className="px-6 py-2.5 rounded-full glass-card text-on-surface-variant hover:text-brand-red border-white/10 hover:border-brand-red/30 font-sans font-semibold text-xs flex items-center gap-2 transition-all duration-200 active:scale-95 cursor-pointer"
+                          >
+                            <X className="w-4 h-4" />
+                            Cancel
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
 
           {/* Stats side column - spans 4 cols */}

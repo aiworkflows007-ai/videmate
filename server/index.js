@@ -76,6 +76,10 @@ function buildYtDlpArgs(url, extraArgs) {
   if (platform === 'tiktok') {
     args.push('--add-header', 'Referer:https://www.tiktok.com/');
   }
+  if (platform === 'youtube') {
+    // Reduces "Sign in to confirm you're not a bot" on datacenter IPs
+    args.push('--extractor-args', 'youtube:player_client=android,web');
+  }
 
   if (COOKIES_FILE && fs.existsSync(COOKIES_FILE)) {
     args.push('--cookies', COOKIES_FILE);
@@ -94,6 +98,9 @@ async function fetchMeta(url) {
 
 function friendlyError(platform, raw) {
   const msg = raw || '';
+  if (platform === 'youtube' && (msg.includes('not a bot') || msg.includes('Sign in'))) {
+    return 'YouTube blocked this server (bot check). Upload browser cookies to the server (cookies.txt) or try Instagram/TikTok/Vimeo links.';
+  }
   if (
     (platform === 'instagram' || platform === 'facebook') &&
     (msg.includes('login') || msg.includes('cookie') || msg.includes('Private'))

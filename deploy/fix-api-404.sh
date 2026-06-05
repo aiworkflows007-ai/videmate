@@ -28,7 +28,7 @@ NGINX_SITE="/etc/nginx/sites-available/vidmate"
 if ! grep -q "location /api/" "$NGINX_SITE" 2>/dev/null; then
   sed -i '/location \/ {/i \
     location /api/ {\
-        proxy_pass http://127.0.0.1:3001/api/;\
+        proxy_pass http://127.0.0.1:3017/api/;\
         proxy_http_version 1.1;\
         proxy_set_header Host $host;\
         proxy_read_timeout 600s;\
@@ -40,6 +40,6 @@ nginx -t
 systemctl reload nginx
 
 echo "=== Test ==="
-curl -s http://127.0.0.1:3001/api/health | head -c 200
+curl -s http://127.0.0.1:3017/api/health | head -c 200
 echo ""
 echo "Done. Open https://vidmate.ai-workflows.cloud/api/health in browser."
